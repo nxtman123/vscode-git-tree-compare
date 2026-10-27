@@ -2,6 +2,7 @@ import { ExtensionContext, window, Disposable, commands, extensions, workspace }
 
 import { NAMESPACE } from './constants'
 import { GitTreeCompareProvider } from './treeProvider';
+import { RepositoriesProvider } from './repositoriesProvider';
 import { CommitsTreeProvider } from './commitsProvider';
 import { createGit } from './gitHelper';
 import { toDisposable } from './git/util';
@@ -187,6 +188,7 @@ export function activate(context: ExtensionContext) {
         );
 
         disposables.push(provider, treeView);
+        disposables.push(new RepositoriesProvider(gitApi, provider, context.globalState, outputChannel));
         void provider.init(treeView).catch(error => {
             outputChannel.appendLine(`Initializing Git Tree Compare failed: ${error.message}`);
             window.showErrorMessage(`Initializing Git Tree Compare failed: ${error.message}`);

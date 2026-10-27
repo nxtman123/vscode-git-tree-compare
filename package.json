@@ -1,13 +1,13 @@
 {
     "name": "git-tree-compare",
-    "displayName": "Git Tree Compare",
-    "description": "Diff your worktree against a branch, tag, or commit in a tree -- especially useful for pull request preparation or merge preview",
-    "version": "1.21.0",
+    "displayName": "Git Tree Compare \u2014 Repository Review",
+    "description": "Review branch and working tree changes across repositories, with a native multifile diff and optional file tree.",
+    "version": "1.22.1",
     "author": {
         "name": "Maik Riechert",
         "url": "https://github.com/letmaik"
     },
-    "publisher": "letmaik",
+    "publisher": "nxtman123",
     "license": "MIT",
     "icon": "resources/logo.png",
     "categories": [
@@ -21,13 +21,13 @@
         "branch"
     ],
     "bugs": {
-        "url": "https://github.com/letmaik/vscode-git-tree-compare/issues"
+        "url": "https://github.com/nxtman123/vscode-git-tree-compare/issues"
     },
     "repository": {
         "type": "git",
-        "url": "https://github.com/letmaik/vscode-git-tree-compare.git"
+        "url": "https://github.com/nxtman123/vscode-git-tree-compare.git"
     },
-    "homepage": "https://github.com/letmaik/vscode-git-tree-compare",
+    "homepage": "https://github.com/nxtman123/vscode-git-tree-compare",
     "engines": {
         "vscode": "^1.108.0"
     },
@@ -54,9 +54,16 @@
         "views": {
             "gitTreeCompare": [
                 {
+                    "id": "gitTreeCompareRepositories",
+                    "name": "Repositories",
+                    "when": "config.git.enabled",
+                    "icon": "./resources/logo.svg",
+                    "initialSize": 2
+                },
+                {
                     "id": "gitTreeCompare",
                     "name": "none",
-                    "when": "config.git.enabled",
+                    "when": "config.git.enabled && gitTreeCompare.exploringRepository",
                     "icon": "./resources/logo.svg",
                     "initialSize": 3
                 },
@@ -84,6 +91,11 @@
                 "view": "gitTreeCompare",
                 "contents": "No git repository found in the open folders.\nIf you expected one, check the Source Control view: the repository may be closed, or blocked as unsafe.\n[Show Source Control](command:workbench.view.scm)",
                 "when": "config.git.enabled && !git.missing && git.state == initialized && gitOpenRepositoryCount == 0 && workbenchState != empty"
+            },
+            {
+                "view": "gitTreeCompareRepositories",
+                "contents": "Open a folder containing Git repositories. Repositories discovered by VS Code appear here.\n[Show Source Control](command:workbench.view.scm)",
+                "when": "gitOpenRepositoryCount == 0"
             }
         ],
         "commands": [
@@ -289,6 +301,54 @@
                 "title": "Refresh Commits",
                 "icon": "$(refresh)",
                 "category": "Git Tree Compare"
+            },
+            {
+                "command": "gitTreeCompare.review.open",
+                "title": "Open Repository Diff",
+                "category": "Git Tree Compare",
+                "icon": "$(git-compare)"
+            },
+            {
+                "command": "gitTreeCompare.review.explore",
+                "title": "Explore Changes in File Tree",
+                "category": "Git Tree Compare",
+                "icon": "$(list-tree)"
+            },
+            {
+                "command": "gitTreeCompare.review.refresh",
+                "title": "Refresh Repositories",
+                "category": "Git Tree Compare",
+                "icon": "$(refresh)"
+            },
+            {
+                "command": "gitTreeCompare.review.toggleTests",
+                "title": "Toggle Test Files",
+                "category": "Git Tree Compare",
+                "icon": "$(beaker)"
+            },
+            {
+                "command": "gitTreeCompare.review.both",
+                "title": "Show All Changes",
+                "category": "Git Tree Compare",
+                "icon": "$(layers)"
+            },
+            {
+                "command": "gitTreeCompare.review.committed",
+                "title": "Show Committed Only",
+                "category": "Git Tree Compare",
+                "icon": "$(git-commit)"
+            },
+            {
+                "command": "gitTreeCompare.review.uncommitted",
+                "title": "Show Uncommitted Only",
+                "category": "Git Tree Compare",
+                "icon": "$(edit)"
+            },
+            {
+                "command": "gitTreeCompare.review.chooseScope",
+                "title": "Change Review Scope\u2026",
+                "icon": "$(filter)",
+                "category": "Git Tree Compare"
             }
         ],
         "submenus": [
@@ -310,6 +370,14 @@
                 {
                     "command": "gitTreeCompare.commits.refresh",
                     "when": "config.gitTreeCompare.showCommitsPanel"
+                },
+                {
+                    "command": "gitTreeCompare.review.open",
+                    "when": "false"
+                },
+                {
+                    "command": "gitTreeCompare.review.explore",
+                    "when": "false"
                 }
             ],
             "gitTreeCompare.viewAndSort": [
@@ -477,6 +545,21 @@
                     "command": "gitTreeCompare.commits.refresh",
                     "when": "view == gitTreeCompareCommits",
                     "group": "navigation@3"
+                },
+                {
+                    "command": "gitTreeCompare.review.toggleTests",
+                    "when": "view == gitTreeCompareRepositories",
+                    "group": "navigation@0"
+                },
+                {
+                    "command": "gitTreeCompare.review.refresh",
+                    "when": "view == gitTreeCompareRepositories",
+                    "group": "navigation@4"
+                },
+                {
+                    "command": "gitTreeCompare.review.chooseScope",
+                    "when": "view == gitTreeCompareRepositories",
+                    "group": "navigation@1"
                 }
             ],
             "view/item/context": [
@@ -655,6 +738,11 @@
                     "command": "gitTreeCompare.openChangesWithDifftool",
                     "when": "view == gitTreeCompare && viewItem == file && config.gitTreeCompare.openChangesWithDifftool",
                     "group": "1_open"
+                },
+                {
+                    "command": "gitTreeCompare.review.explore",
+                    "when": "view == gitTreeCompareRepositories && viewItem == reviewRepository",
+                    "group": "inline@1"
                 }
             ]
         },
@@ -812,6 +900,26 @@
                     "type": "boolean",
                     "description": "Whether to show insertion/deletion counts (+N -N) next to each file.",
                     "default": false
+                },
+                "gitTreeCompare.reviewBase": {
+                    "type": "string",
+                    "default": "develop",
+                    "description": "Default comparison base for the repository sidebar. Falls back to origin/<base>, the remote default, main, master, then HEAD. A repository-specific base chosen in the file tree takes precedence."
+                },
+                "gitTreeCompare.reviewScope": {
+                    "type": "string",
+                    "enum": [
+                        "both",
+                        "committed",
+                        "uncommitted"
+                    ],
+                    "default": "both",
+                    "description": "Repository review scope: merge base to working tree, merge base to HEAD, or HEAD to working tree."
+                },
+                "gitTreeCompare.includeTests": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Include test files in repository reviews and their file trees. The sidebar Tests button toggles this."
                 }
             }
         }
@@ -820,7 +928,8 @@
         "vscode:prepublish": "webpack --mode production",
         "compile": "webpack --mode none",
         "watch": "webpack --mode none --watch --env development",
-        "test-compile": "tsc -p ./"
+        "test-compile": "tsc -p ./",
+        "test": "npm run test-compile && node --test test/*.test.js"
     },
     "devDependencies": {
         "@types/byline": "4.2.31",

@@ -24,6 +24,7 @@ import { throttle } from './git/decorators'
 import { normalizePath } from './fsUtils';
 import { API as GitAPI, Repository as GitAPIRepository } from './typings/git';
 import { Octokit } from '@octokit/rest';
+import { isTestFile, ReviewOptions } from './review';
 
 
 type SortOrder = 'name' | 'path' | 'status' | 'recentlyModified';
@@ -150,6 +151,7 @@ class RepositoryComparison {
     // Restricts the diff to a subset of commits selected in the commits list.
     // Defaults to the full comparison (working tree vs base).
     commitFilter: CommitFilterSpec = { kind: 'all' };
+    reviewOptions?: ReviewOptions;
 
     private initialLoad: Promise<void> | undefined;
     private loaded = false;
@@ -314,6 +316,12 @@ class RepositoryComparison {
             baseRef = await this.getStoredBaseRef();
         }
         if (!baseRef) {
+            const preferred = workspace.getConfiguration(NAMESPACE).get<string>('reviewBase', 'develop');
+            for (const candidate of [preferred, `origin/${preferred}`]) {
+                if (candidate && await this.isRefExisting(candidate)) { baseRef = candidate; break; }
+            }
+        }
+        if (!baseRef) {
             baseRef = await getDefaultBranch(this.repository, HEAD);
         }
         if (!baseRef) {
@@ -338,7 +346,7 @@ class RepositoryComparison {
         }
         const HEADref: string = (HEAD.name || HEAD.commit)!;
         let mergeBase = baseRef;
-        if (!this.host.fullDiff && baseRef != HEAD.name) {
+        if ((!this.host.fullDiff || this.reviewOptions) && baseRef != HEAD.name) {
             // determine merge base to create more sensible/compact diff
             let mergeBaseResult: string | undefined;
             try {
@@ -394,6 +402,10 @@ class RepositoryComparison {
      * selection. `rightRef === null` means the working tree.
      */
     getDiffEndpoints(): { leftRef: string, rightRef: string | null } {
+        if (this.reviewOptions) {
+            return { leftRef: this.reviewOptions.scope === 'uncommitted' ? this.headCommit! : this.mergeBase,
+                rightRef: this.reviewOptions.scope === 'committed' ? this.headCommit! : null };
+        }
         if (this.commitFilter.kind === 'range') {
             return { leftRef: this.commitFilter.leftRef!, rightRef: this.commitFilter.rightRef ?? null };
         }
@@ -402,6 +414,13 @@ class RepositoryComparison {
 
     /** Computes the set of changed files for the active commit filter. */
     private async computeDiff(): Promise<IDiffStatus[]> {
+        if (this.reviewOptions) {
+            const { leftRef, rightRef } = this.getDiffEndpoints();
+            const diff = rightRef === null
+                ? await getDiffStatuses(this.repository, leftRef, true, 50, false, false, this.host.showDiffStats)
+                : await diffTrees(this.repository, leftRef, rightRef, true, 50, this.host.showDiffStats);
+            return diff.filter(file => this.reviewOptions!.includeTests || !isTestFile(path.relative(this.repoRoot, file.dstAbsPath)));
+        }
         const filter = this.commitFilter;
         if (filter.kind === 'empty') {
             return [];
@@ -743,6 +762,7 @@ export class GitTreeCompareProvider implements TreeDataProvider<Element>, Dispos
      * repository. A single repository always uses the original layout.
      */
     private showRepositoryNodes(): boolean {
+        if (this.reviewTreeActive) { return false; }
         return this.multiRepositoryView && this.getRepositoryRoots().length > 1;
     }
 
@@ -1258,6 +1278,21 @@ export class GitTreeCompareProvider implements TreeDataProvider<Element>, Dispos
         this.log('No repository selected');
 
         this.updateViewState();
+    }
+
+    private reviewTreeActive = false;
+
+    async showReviewTree(root: string, base: string, options: ReviewOptions) {
+        this.reviewTreeActive = true;
+        const comparison = await this.getComparison(root);
+        comparison.reviewOptions = options;
+        comparison.commitFilter = { kind: 'all' };
+        comparison.searchFilter = undefined;
+        await comparison.updateRefs(base);
+        await this.changeRepository(root);
+        await comparison.updateDiff(true);
+        this.updateViewState();
+        this.fireTreeDataChange();
     }
 
     async changeRepository(repositoryRoot: string) {

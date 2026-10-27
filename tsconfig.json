@@ -1,6 +1,8 @@
 {
     "compilerOptions": {
         "target": "es2020",
+        "lib": ["es2022", "dom"],
+        "skipLibCheck": true,
         "module": "commonjs",
         "outDir": "./out",
         "rootDir": "./src",

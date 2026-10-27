@@ -1,3 +1,31 @@
+# Repository Review (personal fork)
+
+This fork of [Git Tree Compare by Maik Riechert](https://github.com/letmaik/vscode-git-tree-compare) adds a repository dashboard to the activity bar. Install it **instead of** `letmaik.git-tree-compare`, because both extensions share command and setting names. The personal extension ID is `nxtman123.git-tree-compare`.
+
+- Click a repository to open VS Code’s native multifile diff.
+- Use the inline **Explore Changes in File Tree** button to open the original file explorer below the repository list.
+- The toolbar scope picker switches between **All Changes**, **Committed Only**, and **Uncommitted Only**. The current mode is shown next to the Repositories heading. The beaker button toggles **Tests**; tests are hidden by default.
+- Repositories with changes sort first. Repository rows always report the complete state: **clean**, **committed**, **uncommitted**, or **both**, independently of the current filters. Hover for the comparison base, commit count and path.
+- Repositories come from VS Code’s built-in Git discovery, including repositories nested in an open parent folder. Git status events and window focus refresh the dashboard; the refresh button forces another check.
+
+| Mode | Original | Modified |
+| --- | --- | --- |
+| All Changes (default) | Merge base of base branch and HEAD | Current working tree, including untracked files |
+| Committed Only | Merge base of base branch and HEAD | HEAD |
+| Uncommitted Only | HEAD | Current working tree, including untracked files |
+
+The default base is `develop`, then `origin/develop` if there is no local develop. Repositories without either fall back to their remote default, `main`, `master`, then `HEAD`. A base selected explicitly in the file tree is remembered per repository. Comparisons use local refs; the dashboard does not fetch or alter Git state. The default can be changed with `gitTreeCompare.reviewBase`.
+
+Working-tree comparisons show the net result of staged and unstaged edits. If a staged edit is canceled by an unstaged edit, the repository remains marked uncommitted even though the net diff can be empty. Unsaved editor buffers are not part of Git’s file discovery. Submodule content is not expanded into a text diff. Repositories without a first commit or with no common ancestor report an unavailable comparison with the reason in the tooltip.
+
+Test detection covers test/spec directories, `.test`, `.spec`, `_test`, `test_`, common `Test`/`Tests` suffixes, snapshots, and e2e directories. Tests remain ordinary expandable files when included: VS Code does not expose selective initial collapse for its native multifile diff.
+
+Build locally with `npm install`, `npm test`, and `npx vsce package`. Install the resulting VSIX with `code --install-extension <file.vsix> --force`, then run **Developer: Reload Window**.
+
+---
+
+## Upstream documentation
+
 # Git Tree Compare
 
 This [Visual Studio Code](https://code.visualstudio.com/) extension helps you compare your working tree against a branch, tag, or commit in a natural **folder tree structure** or a flat list.

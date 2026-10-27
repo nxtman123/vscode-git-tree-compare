@@ -5,3 +5,5 @@ src/
 .gitignore
 tsconfig.json
 webpack.config.js
+
+test/
