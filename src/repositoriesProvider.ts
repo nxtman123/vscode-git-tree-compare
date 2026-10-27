@@ -133,9 +133,8 @@ export class RepositoriesProvider implements TreeDataProvider<RepositoryRow>, Di
     }
 
     getChildren(): RepositoryRow[] {
-        const changed = (row: RepositoryRow) => Boolean(row.summary && (row.summary.commits > 0 || row.summary.dirty));
-        return [...this.rows.values()].sort((a, b) => Number(changed(b)) - Number(changed(a))
-            || path.basename(a.root).localeCompare(path.basename(b.root)) || a.root.localeCompare(b.root));
+        return [...this.rows.values()].sort((a, b) =>
+            path.basename(a.root).localeCompare(path.basename(b.root)) || a.root.localeCompare(b.root));
     }
 
     getTreeItem(row: RepositoryRow): TreeItem {

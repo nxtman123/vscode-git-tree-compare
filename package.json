@@ -2,7 +2,7 @@
     "name": "git-tree-compare",
     "displayName": "Git Tree Compare \u2014 Repository Review",
     "description": "Review branch and working tree changes across repositories, with a native multifile diff and optional file tree.",
-    "version": "1.22.1",
+    "version": "1.22.2",
     "author": {
         "name": "Maik Riechert",
         "url": "https://github.com/letmaik"

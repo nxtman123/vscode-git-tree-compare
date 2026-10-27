@@ -5,7 +5,7 @@ This fork of [Git Tree Compare by Maik Riechert](https://github.com/letmaik/vsco
 - Click a repository to open VS Code’s native multifile diff.
 - Use the inline **Explore Changes in File Tree** button to open the original file explorer below the repository list.
 - The toolbar scope picker switches between **All Changes**, **Committed Only**, and **Uncommitted Only**. The current mode is shown next to the Repositories heading. The beaker button toggles **Tests**; tests are hidden by default.
-- Repositories with changes sort first. Repository rows always report the complete state: **clean**, **committed**, **uncommitted**, or **both**, independently of the current filters. Hover for the comparison base, commit count and path.
+- Repositories always sort alphabetically by name. Repository rows always report the complete state: **clean**, **committed**, **uncommitted**, or **both**, independently of the current filters. Hover for the comparison base, commit count and path.
 - Repositories come from VS Code’s built-in Git discovery, including repositories nested in an open parent folder. Git status events and window focus refresh the dashboard; the refresh button forces another check.
 
 | Mode | Original | Modified |
