@@ -156,7 +156,7 @@ export class RepositoriesProvider implements TreeDataProvider<RepositoryRow>, Di
         item.command = { command: NAMESPACE + '.review.open', title: 'Open Repository Diff', arguments: [row] };
         const s = row.summary;
         const status = s ? s.commits > 0 ? s.dirty ? 'both' : 'committed' : s.dirty ? 'uncommitted' : 'clean' : undefined;
-        item.description = s ? `${status} · ${s.branch}` : row.error ? 'unavailable' : 'checking…';
+        item.description = s ? s.branch : row.error ? 'unavailable' : 'checking…';
         item.iconPath = new ThemeIcon(row.error ? 'warning' : status === 'both' ? 'layers' : status === 'committed' ? 'git-commit'
             : status === 'uncommitted' ? 'edit' : 'repo', status && status !== 'clean' ? new ThemeColor('gitDecoration.modifiedResourceForeground') : undefined);
         item.tooltip = s ? `${row.root}\n${s.branch} → ${s.base} (merge base ${s.mergeBase.slice(0, 8)})\n${s.commits} branch commits · ${s.committedFiles} committed files\n${s.dirty ? 'Has uncommitted changes (including untracked files)' : 'Working tree clean'}\nClick: multifile diff · Tree button: file explorer`
