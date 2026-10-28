@@ -14,7 +14,13 @@ This fork of [Git Tree Compare by Maik Riechert](https://github.com/letmaik/vsco
 | Committed Only | Merge base of base branch and HEAD | HEAD |
 | Uncommitted Only | HEAD | Current working tree, including untracked files |
 
-The default base is `develop`, then `origin/develop` if there is no local develop. Repositories without either fall back to their remote default, `main`, `master`, then `HEAD`. A base selected explicitly in the file tree is remembered per repository. Comparisons use local refs; the dashboard does not fetch or alter Git state. The default can be changed with `gitTreeCompare.reviewBase`.
+The default base is **Automatic** (`gitTreeCompare.reviewBase: "auto"`). It examines local and remote `develop`, `development`, `main`, `master`, and `trunk` branches, plus remote default branches. Customize the exact branch names with `gitTreeCompare.mainBranches`.
+
+For each candidate, it finds the merge base with the checkout and counts commits from that ancestor to HEAD. The smallest count wins. Ties favor the candidate with fewer commits beyond that ancestor, then the checked-out branch itself, its tracking branch, a remote default, a local ref, and finally alphabetical ref order. Thus features cut from develop follow develop, hotfixes cut from master follow master, and main/master checkouts do not show changes merely because an older develop ref exists. When several branches share the same ancestor, Git cannot recover which one was originally used to create the feature; the tie-breakers make that case predictable.
+
+**Change Base…** can pin an explicit branch, tag, or commit per repository. Choose **Automatic — nearest main-like branch** to resume detection. An explicit `gitTreeCompare.reviewBase` also overrides automatic selection globally. Missing explicit refs report an error instead of silently comparing with a different branch. Automatic selection never falls back to HEAD when no eligible ancestor exists.
+
+Versions before 1.23 stored automatic and manual base choices in the same cache. That ambiguous legacy cache is ignored on upgrade; reselect any manual base you want to pin. New explicit choices are stored separately, so automatic detection follows branch switches and ref updates. Comparisons use already-fetched refs; the dashboard does not fetch or change repository contents.
 
 Working-tree comparisons show the net result of staged and unstaged edits. If a staged edit is canceled by an unstaged edit, the repository remains marked uncommitted even though the net diff can be empty. Unsaved editor buffers are not part of Git’s file discovery. Submodule content is not expanded into a text diff. Repositories without a first commit or with no common ancestor report an unavailable comparison with the reason in the tooltip.
 

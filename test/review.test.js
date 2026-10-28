@@ -77,11 +77,80 @@ test('missing develop falls back to remote default and supports detached HEAD', 
     const { git, review } = fixture(t);
     git('branch', '-m', 'develop', 'main'); git('update-ref', 'refs/remotes/origin/main', 'main');
     git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main'); git('checkout', '--detach');
-    const summary = await review.summary('develop');
+    const summary = await review.summary();
     assert.equal(summary.base, 'origin/main'); assert.equal(summary.branch, summary.head.slice(0, 8));
 });
 
 test('test classifier covers conventional names without hiding normal source files', () => {
     for (const file of ['tests/a.ts', '__tests__/a.ts', 'a.test.ts', 'a.spec.js', 'a_test.go', 'test_thing.py', 'ThingTests.cs', 'TestThing.java', '__snapshots__/a.snap', 'e2e/a.ts']) { assert.equal(isTestFile(file), true, file); }
     for (const file of ['src/contest.ts', 'src/latest.ts', 'src/testing.ts', 'src/specification.ts', 'src/app.ts']) { assert.equal(isTestFile(file), false, file); }
+});
+
+test('automatic base follows features from develop and hotfixes from master across checkouts', async t => {
+    const { git, write, review } = fixture(t);
+    git('branch', 'master', 'develop');
+    git('switch', 'develop'); write('app.txt', 'develop work\n'); git('commit', '-am', 'develop moves');
+    git('switch', '-c', 'ordinary-feature'); write('app.txt', 'feature work\n'); git('commit', '-am', 'feature');
+    let summary = await review.summary();
+    assert.equal(summary.base, 'develop'); assert.equal(summary.commits, 1);
+    git('switch', '-c', 'urgent-fix', 'master'); write('app.txt', 'fix\n'); git('commit', '-am', 'fix');
+    summary = await review.summary();
+    assert.equal(summary.base, 'master'); assert.equal(summary.commits, 1);
+    git('switch', 'ordinary-feature'); assert.equal((await review.summary()).base, 'develop');
+});
+
+test('main and master checkouts are not misreported against stale remote develop', async t => {
+    const { git, write, review } = fixture(t);
+    git('update-ref', 'refs/remotes/origin/develop', 'develop'); git('branch', '-D', 'develop');
+    git('branch', '-m', 'main'); write('app.txt', 'main work\n'); git('commit', '-am', 'main advances');
+    git('update-ref', 'refs/remotes/origin/main', 'main'); git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    let summary = await review.summary();
+    assert.equal(summary.base, 'main'); assert.equal(summary.commits, 0); assert.equal(summary.committedFiles, 0);
+    git('branch', '-m', 'master'); summary = await review.summary();
+    assert.equal(summary.base, 'master'); assert.equal(summary.commits, 0);
+});
+
+test('a newer remote base beats a stale local branch when its ancestor is closer', async t => {
+    const { git, write, review } = fixture(t);
+    write('app.txt', 'remote develop progress\n'); git('commit', '-am', 'advance');
+    git('update-ref', 'refs/remotes/origin/develop', 'HEAD');
+    write('app.txt', 'feature\n'); git('commit', '-am', 'feature');
+    const summary = await review.summary();
+    assert.equal(summary.base, 'origin/develop'); assert.equal(summary.commits, 1);
+});
+
+test('fully tied ancestors use the remote default deterministically', async t => {
+    const { git, write, review } = fixture(t);
+    git('branch', 'master', 'develop'); git('update-ref', 'refs/remotes/origin/master', 'master');
+    git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/master');
+    write('app.txt', 'feature\n'); git('commit', '-am', 'feature');
+    assert.equal((await review.summary()).base, 'origin/master');
+});
+
+test('explicit refs override detection, but missing explicit refs fail visibly', async t => {
+    const { git, write, review } = fixture(t);
+    git('branch', 'master'); write('app.txt', 'feature\n'); git('commit', '-am', 'feature');
+    git('branch', '-f', 'develop', 'HEAD');
+    assert.equal((await review.summary()).commits, 0);
+    const pinned = await review.summary('master');
+    assert.equal(pinned.base, 'master'); assert.equal(pinned.commits, 1);
+    await assert.rejects(review.summary('missing-base'), /does not exist locally/);
+});
+
+test('unrelated main-like branches are skipped and unsupported branches are not silently HEAD', async t => {
+    const { git, write, review } = fixture(t);
+    git('checkout', '--orphan', 'main'); git('rm', '-rf', '.'); write('other.txt', 'unrelated\n'); git('add', '.'); git('commit', '-m', 'other root');
+    git('switch', 'feature'); assert.equal((await review.summary()).base, 'develop');
+    git('branch', '-D', 'develop');
+    await assert.rejects(review.summary(), /No main-like branch with a common ancestor/);
+});
+
+test('custom branch names and remote default branches participate without accepting arbitrary feature names', async t => {
+    const { git, write, review } = fixture(t);
+    write('app.txt', 'integration progress\n'); git('commit', '-am', 'integration'); git('branch', 'integration');
+    git('branch', 'topic/main'); write('app.txt', 'feature change\n'); git('commit', '-am', 'feature');
+    assert.equal((await review.summary()).base, 'develop');
+    assert.equal((await review.summary('auto', ['develop', 'integration'])).base, 'integration');
+    git('update-ref', 'refs/remotes/upstream/stable', 'integration'); git('symbolic-ref', 'refs/remotes/upstream/HEAD', 'refs/remotes/upstream/stable');
+    assert.equal((await review.summary()).base, 'upstream/stable');
 });

@@ -2,7 +2,7 @@
     "name": "git-tree-compare",
     "displayName": "Git Tree Compare \u2014 Repository Review",
     "description": "Review branch and working tree changes across repositories, with a native multifile diff and optional file tree.",
-    "version": "1.22.2",
+    "version": "1.23.0",
     "author": {
         "name": "Maik Riechert",
         "url": "https://github.com/letmaik"
@@ -903,8 +903,8 @@
                 },
                 "gitTreeCompare.reviewBase": {
                     "type": "string",
-                    "default": "develop",
-                    "description": "Default comparison base for the repository sidebar. Falls back to origin/<base>, the remote default, main, master, then HEAD. A repository-specific base chosen in the file tree takes precedence."
+                    "default": "auto",
+                    "description": "Comparison base: auto chooses the nearest main-like ancestor by commit distance. Set a ref to override globally; Change Base in the file tree overrides per repository."
                 },
                 "gitTreeCompare.reviewScope": {
                     "type": "string",
@@ -920,6 +920,20 @@
                     "type": "boolean",
                     "default": false,
                     "description": "Include test files in repository reviews and their file trees. The sidebar Tests button toggles this."
+                },
+                "gitTreeCompare.mainBranches": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "default": [
+                        "develop",
+                        "development",
+                        "main",
+                        "master",
+                        "trunk"
+                    ],
+                    "description": "Exact main-like branch names considered for automatic base selection, across local and remote branches. Remote default branches are included too."
                 }
             }
         }

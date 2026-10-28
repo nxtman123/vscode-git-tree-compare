@@ -5,11 +5,11 @@ import { API, Repository } from './typings/git';
 import { getWorkspaceFolders } from './gitHelper';
 import { NAMESPACE } from './constants';
 import { GitTreeCompareProvider } from './treeProvider';
-import { isTestFile, RepositoryReview, ReviewOptions, ReviewScope, ReviewSummary } from './review';
+import { EXPLICIT_BASE_PREFIX, MAIN_BRANCH_NAMES, isTestFile, RepositoryReview, ReviewOptions, ReviewScope, ReviewSummary } from './review';
 
 const scopeLabels: Record<ReviewScope, string> = { both: 'All Changes', committed: 'Committed Only', uncommitted: 'Uncommitted Only' };
 
-interface RepositoryRow { root: string; summary?: ReviewSummary; error?: string; }
+interface RepositoryRow { root: string; requestedBase?: string; summary?: ReviewSummary; error?: string; }
 
 export class RepositoriesProvider implements TreeDataProvider<RepositoryRow>, Disposable {
     private readonly changed = new EventEmitter<void>();
@@ -32,15 +32,17 @@ export class RepositoriesProvider implements TreeDataProvider<RepositoryRow>, Di
             files.onDidChangeTreeData(() => {
                 // A base chosen in the original explorer is shared with the dashboard.
                 for (const row of this.rows.values()) {
-                    const stored = this.state.get<string>('baseRef_' + row.root);
-                    if (stored && row.summary && stored !== row.summary.base) { this.schedule(row.root); }
+                    if (row.requestedBase !== undefined && row.requestedBase !== this.base(row.root)) { this.schedule(row.root); }
                 }
             }),
             api.onDidOpenRepository(() => this.sync()), api.onDidCloseRepository(() => this.sync()),
             workspace.onDidChangeWorkspaceFolders(() => this.sync()),
             window.onDidChangeWindowState(event => { if (event.focused) { this.refresh(); } }),
             workspace.onDidChangeConfiguration(event => {
-                if (event.affectsConfiguration(NAMESPACE + '.reviewBase')) { this.refresh(); }
+                if (event.affectsConfiguration(NAMESPACE + '.reviewBase') || event.affectsConfiguration(NAMESPACE + '.mainBranches')) {
+                    this.refresh();
+                    if (this.selected) { void this.open(this.selected.root, this.selected.tree); }
+                }
                 if (event.affectsConfiguration(NAMESPACE + '.reviewScope') || event.affectsConfiguration(NAMESPACE + '.includeTests')) {
                     this.updateControls();
                     if (this.selected) { void this.open(this.selected.root, this.selected.tree); }
@@ -81,8 +83,8 @@ export class RepositoriesProvider implements TreeDataProvider<RepositoryRow>, Di
     }
 
     private base(root: string): string {
-        return this.state.get<string>('baseRef_' + root)
-            || workspace.getConfiguration(NAMESPACE).get<string>('reviewBase', 'develop');
+        return this.state.get<string>(EXPLICIT_BASE_PREFIX + root)
+            || workspace.getConfiguration(NAMESPACE).get<string>('reviewBase', 'auto');
     }
 
     private sync() {
@@ -124,8 +126,9 @@ export class RepositoriesProvider implements TreeDataProvider<RepositoryRow>, Di
 
     private async update(root: string) {
         try {
-            const summary = await new RepositoryReview(this.api.git.path, root).summary(this.base(root));
-            if (this.rows.has(root) && !this.disposed) { this.rows.set(root, { root, summary }); }
+            const requestedBase = this.base(root);
+            const summary = await new RepositoryReview(this.api.git.path, root).summary(requestedBase, workspace.getConfiguration(NAMESPACE).get<string[]>('mainBranches', MAIN_BRANCH_NAMES));
+            if (this.rows.has(root) && !this.disposed) { this.rows.set(root, { root, summary, requestedBase }); }
         } catch (error) {
             if (this.rows.has(root) && !this.disposed) { this.rows.set(root, { root, error: error.message }); }
         }
@@ -158,9 +161,10 @@ export class RepositoriesProvider implements TreeDataProvider<RepositoryRow>, Di
         try {
             const options = this.options;
             const review = new RepositoryReview(this.api.git.path, root);
-            const summary = await review.summary(this.base(root));
+            const requestedBase = this.base(root);
+            const summary = await review.summary(requestedBase, workspace.getConfiguration(NAMESPACE).get<string[]>('mainBranches', MAIN_BRANCH_NAMES));
             if (request !== this.selection || this.disposed) { return; }
-            this.rows.set(root, { root, summary });
+            this.rows.set(root, { root, summary, requestedBase });
             this.changed.fire();
             if (tree) {
                 await commands.executeCommand('setContext', NAMESPACE + '.exploringRepository', true);

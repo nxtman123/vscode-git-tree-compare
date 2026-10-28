@@ -12,7 +12,7 @@ import { NAMESPACE } from './constants'
 import { Repository, Git } from './git/git'
 import { Ref, RefType } from './git/api/git'
 import { anyEvent, filterEvent, eventToPromise } from './git/util'
-import { getDefaultBranch, getHeadModificationDate, getBranchCommit,
+import { getHeadModificationDate, getBranchCommit,
          getDiffStatuses, diffTrees, IDiffStatus, IDiffStats, StatusCode, getAbsGitDir,
          getWorkspaceFolders, getGitRepositoryFolders, hasUncommittedChanges, rmFile,
          listWorktrees, IWorktreeInfo,
@@ -24,7 +24,7 @@ import { throttle } from './git/decorators'
 import { normalizePath } from './fsUtils';
 import { API as GitAPI, Repository as GitAPIRepository } from './typings/git';
 import { Octokit } from '@octokit/rest';
-import { isTestFile, ReviewOptions } from './review';
+import { EXPLICIT_BASE_PREFIX, MAIN_BRANCH_NAMES, RepositoryReview, isTestFile, ReviewOptions } from './review';
 
 
 type SortOrder = 'name' | 'path' | 'status' | 'recentlyModified';
@@ -246,17 +246,8 @@ class RepositoryComparison {
         this.filesOutsideTreeRoot = new Map();
     }
 
-    private async getStoredBaseRef(): Promise<string | undefined> {
-        let baseRef = this.host.globalState.get<string>('baseRef_' + this.repoRoot);
-        if (baseRef) {
-            if (await this.isRefExisting(baseRef) || await this.isCommitExisting(baseRef)) {
-                this.host.log('Using stored base ref: ' + baseRef);
-            } else {
-                this.host.log('Not using non-existant stored base ref: ' + baseRef);
-                baseRef = undefined;
-            }
-        }
-        return baseRef;
+    private getStoredBaseRef(): string | undefined {
+        return this.host.globalState.get<string>(EXPLICIT_BASE_PREFIX + this.repoRoot);
     }
 
     async isRefExisting(refName: string): Promise<boolean> {
@@ -271,10 +262,6 @@ class RepositoryComparison {
         } catch {
             return false;
         }
-    }
-
-    private updateStoredBaseRef(baseRef: string) {
-        this.host.globalState.update('baseRef_' + this.repoRoot, baseRef);
     }
 
     async isHeadChanged(): Promise<boolean> {
@@ -305,45 +292,10 @@ class RepositoryComparison {
         // if detached HEAD, then .commit exists, otherwise only .name
         const headName = HEAD.name;
         const headCommit = HEAD.commit || await getBranchCommit(HEAD.name!, this.repository);
-        if (baseRef) {
-            const exists = await this.isRefExisting(baseRef) || await this.isCommitExisting(baseRef);
-            if (!exists) {
-                // happens when branch was deleted
-                baseRef = undefined;
-            }
-        }
-        if (!baseRef) {
-            baseRef = await this.getStoredBaseRef();
-        }
-        if (!baseRef) {
-            const preferred = workspace.getConfiguration(NAMESPACE).get<string>('reviewBase', 'develop');
-            for (const candidate of [preferred, `origin/${preferred}`]) {
-                if (candidate && await this.isRefExisting(candidate)) { baseRef = candidate; break; }
-            }
-        }
-        if (!baseRef) {
-            baseRef = await getDefaultBranch(this.repository, HEAD);
-        }
-        if (!baseRef) {
-            if (HEAD.name) {
-                baseRef = HEAD.name;
-            } else {
-                // detached HEAD and no default branch was found
-                // pick an arbitrary ref as base, give preference to common refs
-                const refs = await this.repository.getRefs();
-                const commonRefs = ['origin/main', 'main', 'origin/master', 'master'];
-                const match = refs.find(ref => ref.name !== undefined && commonRefs.indexOf(ref.name) !== -1);
-                if (match) {
-                    baseRef = match.name;
-                } else if (refs.length > 0) {
-                    baseRef = refs[0].name;
-                }
-            }
-        }
-        if (!baseRef) {
-            // this should never happen
-            throw new Error('Base ref could not be determined!');
-        }
+        const config = workspace.getConfiguration(NAMESPACE);
+        const requested = baseRef ?? this.getStoredBaseRef() ?? config.get<string>('reviewBase', 'auto');
+        baseRef = await new RepositoryReview(this.host.gitApi.git.path, this.repoRoot).resolveBase(
+            requested, headCommit, headName, config.get<string[]>('mainBranches', MAIN_BRANCH_NAMES));
         const HEADref: string = (HEAD.name || HEAD.commit)!;
         let mergeBase = baseRef;
         if ((!this.host.fullDiff || this.reviewOptions) && baseRef != HEAD.name) {
@@ -394,7 +346,6 @@ class RepositoryComparison {
         this.headCommit = headCommit;
         this.baseRef = baseRef;
         this.mergeBase = mergeBase;
-        this.updateStoredBaseRef(baseRef);
     }
 
     /**
@@ -953,7 +904,7 @@ export class GitTreeCompareProvider implements TreeDataProvider<Element>, Dispos
         try {
             if (await comparison.isHeadChanged()) {
                 const filterBefore = comparison.commitFilter;
-                await comparison.updateRefs(comparison.baseRef);
+                await comparison.updateRefs();
                 // updateRefs drops a commit selection that no longer applies. The file
                 // list still belongs to the old range at this point, and the commits
                 // list cannot recover it (setCommitFilter would see the filter already
@@ -2001,10 +1952,7 @@ export class GitTreeCompareProvider implements TreeDataProvider<Element>, Dispos
 
     private async refreshComparison(comparison: RepositoryComparison, showErrors=false) {
         try {
-            if (await comparison.isHeadChanged()) {
-                // make sure merge base is updated when switching branches
-                await comparison.updateRefs(comparison.baseRef);
-            }
+            await comparison.updateRefs();
             await comparison.updateDiff(true);
         } catch (e: any) {
             // some error occured, ignore and try again next time
@@ -2016,7 +1964,7 @@ export class GitTreeCompareProvider implements TreeDataProvider<Element>, Dispos
         }
     }
 
-    private async handleConfigChange() {
+    private async handleConfigChange(e?: import('vscode').ConfigurationChangeEvent) {
         const oldTreeRootIsRepo = this.treeRootIsRepo;
         const oldInclude = this.includeFilesOutsideWorkspaceFolderRoot;
         const oldOpenChangesOnSelect = this.openChangesOnSelect;
@@ -2084,6 +2032,8 @@ export class GitTreeCompareProvider implements TreeDataProvider<Element>, Dispos
             }
 
             const needsReload =
+                e?.affectsConfiguration(NAMESPACE + '.reviewBase') ||
+                e?.affectsConfiguration(NAMESPACE + '.mainBranches') ||
                 oldFullDiff != this.fullDiff ||
                 oldFindRenames != this.findRenames ||
                 oldRenameThreshold != this.renameThreshold ||
@@ -2101,7 +2051,7 @@ export class GitTreeCompareProvider implements TreeDataProvider<Element>, Dispos
                     continue;
                 }
                 try {
-                    await comparison.updateRefs(comparison.baseRef);
+                    await comparison.updateRefs();
                     await comparison.updateDiff(false);
                 } catch (e: any) {
                     let msg = 'Updating the git tree failed';
@@ -2584,13 +2534,14 @@ export class GitTreeCompareProvider implements TreeDataProvider<Element>, Dispos
             window.showErrorMessage('No repository selected');
             return;
         }
+        const automatic: QuickPickItem = { label: 'Automatic — nearest main-like branch', description: 'Follow the closest develop, main, master, trunk, or remote default ancestor' };
         const commit = new ChangeBaseCommitItem();
         const sortOrder = workspace.getConfiguration(NAMESPACE).get<'alphabetically' | 'committerdate'>('refSortOrder', 'committerdate');
         const refs = (await comparison.repository.getRefs({ sort: sortOrder })).filter(ref => ref.name);
         const heads = refs.filter(ref => ref.type === RefType.Head).map(ref => new ChangeBaseRefItem(ref));
         const tags = refs.filter(ref => ref.type === RefType.Tag).map(ref => new ChangeBaseTagItem(ref));
         const remoteHeads = refs.filter(ref => ref.type === RefType.RemoteHead).map(ref => new ChangeBaseRemoteHeadItem(ref));
-        const picks = [commit, ...heads, ...tags, ...remoteHeads];
+        const picks = [automatic, commit, ...heads, ...tags, ...remoteHeads];
 
         const placeHolder = 'Select a ref to use as comparison base';
         const choice = await window.showQuickPick<QuickPickItem>(picks, { placeHolder });
@@ -2601,7 +2552,9 @@ export class GitTreeCompareProvider implements TreeDataProvider<Element>, Dispos
 
         let baseRef: string;
 
-        if (choice instanceof ChangeBaseRefItem) {
+        if (choice === automatic) {
+            baseRef = 'auto';
+        } else if (choice instanceof ChangeBaseRefItem) {
             baseRef = choice.ref.name!;
         } else if (choice instanceof ChangeBaseCommitItem) {
             const commitInput = await window.showInputBox({
@@ -2616,12 +2569,10 @@ export class GitTreeCompareProvider implements TreeDataProvider<Element>, Dispos
             throw new Error("unsupported item type");
         }
 
-        if (comparison.baseRef === baseRef) {
-            return;
-        }
         window.withProgress({ location: ProgressLocation.Window, title: 'Updating Tree Base' }, async _ => {
             try {
                 await comparison.updateRefs(baseRef);
+                await this.globalState.update(EXPLICIT_BASE_PREFIX + comparison.repoRoot, baseRef);
             } catch (e: any) {
                 let msg = 'Updating the git tree base failed';
                 this.log(msg, e);
@@ -2821,6 +2772,7 @@ export class GitTreeCompareProvider implements TreeDataProvider<Element>, Dispos
                 try {
                     const originBaseRef = `origin/${baseRef}`;
                     this.log(`Updating base to: ${originBaseRef}`);
+                    await this.globalState.update(EXPLICIT_BASE_PREFIX + comparison.repoRoot, originBaseRef);
                     await comparison.updateRefs(originBaseRef);
                     await comparison.updateDiff(false);
                     this.log('Refreshing tree');
