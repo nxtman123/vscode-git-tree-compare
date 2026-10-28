@@ -1,6 +1,7 @@
 import * as path from 'path';
 import { commands, Disposable, EventEmitter, Memento, OutputChannel, ThemeColor, ThemeIcon,
     TreeDataProvider, TreeItem, TreeItemCollapsibleState, TreeView, Uri, window, workspace } from 'vscode';
+import { DiffSnapshot, LiveDiffViews } from './liveDiffViews';
 import { API, Repository } from './typings/git';
 import { getWorkspaceFolders } from './gitHelper';
 import { NAMESPACE } from './constants';
@@ -24,9 +25,12 @@ export class RepositoriesProvider implements TreeDataProvider<RepositoryRow>, Di
     private selection = 0;
     private selected?: { root: string; tree: boolean };
     private treeView: TreeView<RepositoryRow>;
+    private readonly liveViews: LiveDiffViews;
 
     constructor(private readonly api: API, private readonly files: GitTreeCompareProvider,
                 private readonly state: Memento, private readonly output: OutputChannel) {
+        this.liveViews = new LiveDiffViews(root => this.schedule(root));
+        this.disposables.push(this.liveViews);
         this.treeView = window.createTreeView(NAMESPACE + 'Repositories', { treeDataProvider: this });
         this.disposables.push(this.treeView,
             files.onDidChangeTreeData(() => {
@@ -108,6 +112,8 @@ export class RepositoriesProvider implements TreeDataProvider<RepositoryRow>, Di
     refresh() { for (const root of this.rows.keys()) { this.schedule(root); } }
 
     private schedule(root: string) {
+        if (this.disposed || !this.rows.has(root)) { return; }
+        this.liveViews.invalidate(root);
         this.pending.add(root);
         if (!this.timer) { this.timer = setTimeout(() => { this.timer = undefined; this.drain(); }, 600); }
     }
@@ -128,7 +134,10 @@ export class RepositoriesProvider implements TreeDataProvider<RepositoryRow>, Di
         try {
             const requestedBase = this.base(root);
             const summary = await new RepositoryReview(this.api.git.path, root).summary(requestedBase, workspace.getConfiguration(NAMESPACE).get<string[]>('mainBranches', MAIN_BRANCH_NAMES));
-            if (this.rows.has(root) && !this.disposed) { this.rows.set(root, { root, summary, requestedBase }); }
+            if (this.rows.has(root) && !this.disposed) {
+                this.rows.set(root, { root, summary, requestedBase });
+                await this.liveViews.refresh(root, options => this.snapshot(root, summary, options));
+            }
         } catch (error) {
             if (this.rows.has(root) && !this.disposed) { this.rows.set(root, { root, error: error.message }); }
         }
@@ -157,6 +166,7 @@ export class RepositoriesProvider implements TreeDataProvider<RepositoryRow>, Di
 
     private async open(root: string, tree: boolean) {
         const request = ++this.selection;
+        const liveRequest = this.liveViews.beginOpen();
         this.selected = { root, tree };
         try {
             const options = this.options;
@@ -172,33 +182,34 @@ export class RepositoriesProvider implements TreeDataProvider<RepositoryRow>, Di
                 if (request === this.selection) { await commands.executeCommand(NAMESPACE + '.focus'); }
                 return;
             }
-            const allFiles = await review.files(summary, options.scope);
+            const snapshot = await this.snapshot(root, summary, options);
             if (request !== this.selection || this.disposed) { return; }
-            const files = allFiles.filter(file => options.includeTests || !isTestFile(file.path));
-            const leftRef = options.scope === 'uncommitted' ? summary.head : summary.mergeBase;
-            const resources: [Uri, Uri | undefined, Uri | undefined][] = [];
-            for (const file of files) {
-                const local = Uri.file(path.join(root, file.path));
-                // Submodules are directories, which cannot be rendered as text documents.
-                if (file.status !== 'D') {
-                    try { if ((await workspace.fs.stat(local)).type & 2) { continue; } }
-                    catch { /* A committed file can have been deleted in the current worktree. */ }
-                }
-                const left = file.status === 'A' ? undefined : this.api.toGitUri(Uri.file(path.join(root, file.originalPath)), leftRef);
-                const right = file.status === 'D' ? undefined : options.scope === 'committed' ? this.api.toGitUri(local, summary.head) : local;
-                resources.push([local, left, right]);
-            }
-            if (request !== this.selection || this.disposed) { return; }
-            if (!resources.length) {
-                await window.showInformationMessage(allFiles.length ? 'No non-test changes in this view. Enable Tests to see test changes.'
-                    : `No net ${options.scope === 'both' ? '' : options.scope + ' '}file changes in ${path.basename(root)}.`);
-                return;
-            }
-            await commands.executeCommand('vscode.changes', `${path.basename(root)} · ${scopeLabels[options.scope]} vs ${options.scope === 'uncommitted' ? 'HEAD' : summary.base}${options.includeTests ? '' : ' · no tests'}`, resources);
+            await this.liveViews.open(root, options, snapshot);
         } catch (error) {
             this.output.appendLine(`Repository review (${root}): ${error.message}`);
             if (request === this.selection) { await window.showErrorMessage(`Cannot review ${path.basename(root)}: ${error.message}`); }
+        } finally {
+            this.liveViews.endOpen(liveRequest);
         }
+    }
+
+    private async snapshot(root: string, summary: ReviewSummary, options: ReviewOptions): Promise<DiffSnapshot> {
+        const allFiles = await new RepositoryReview(this.api.git.path, root).files(summary, options.scope);
+        const files = allFiles.filter(file => options.includeTests || !isTestFile(file.path));
+        const leftRef = options.scope === 'uncommitted' ? summary.head : summary.mergeBase;
+        const resources: DiffSnapshot['resources'] = [];
+        for (const file of files) {
+            const local = Uri.file(path.join(root, file.path));
+            // Submodules are directories, which cannot be rendered as text documents.
+            if (file.status !== 'D') {
+                try { if ((await workspace.fs.stat(local)).type & 2) { continue; } }
+                catch { /* A committed file can have been deleted in the current worktree. */ }
+            }
+            const left = file.status === 'A' ? undefined : this.api.toGitUri(Uri.file(path.join(root, file.originalPath)), leftRef);
+            const right = file.status === 'D' ? undefined : options.scope === 'committed' ? this.api.toGitUri(local, summary.head) : local;
+            resources.push([local, left, right]);
+        }
+        return { title: `${path.basename(root)} · ${scopeLabels[options.scope]} vs ${options.scope === 'uncommitted' ? 'HEAD' : summary.base}${options.includeTests ? '' : ' · no tests'}`, resources };
     }
 
     dispose() {

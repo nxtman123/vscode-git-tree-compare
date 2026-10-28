@@ -6,6 +6,7 @@ This fork of [Git Tree Compare by Maik Riechert](https://github.com/letmaik/vsco
 - Use the inline **Explore Changes in File Tree** button to open the original file explorer below the repository list.
 - The toolbar scope picker switches between **All Changes**, **Committed Only**, and **Uncommitted Only**. The current mode is shown next to the Repositories heading. The beaker button toggles **Tests**; tests are hidden by default.
 - Repositories always sort alphabetically by name. Repository rows always report the complete state: **clean**, **committed**, **uncommitted**, or **both**, independently of the current filters. Hover for the comparison base, commit count and path.
+- Open repository diff viewers watch external file changes and Git status updates. File additions, deletions, and comparison-ref changes refresh the file list after a short debounce; content-only edits use VS Code’s existing live text models. Empty comparisons stay open and start showing files when changes arrive.
 - Repositories come from VS Code’s built-in Git discovery, including repositories nested in an open parent folder. Git status events and window focus refresh the dashboard; the refresh button forces another check.
 
 | Mode | Original | Modified |
@@ -23,6 +24,8 @@ For each candidate, it finds the merge base with the checkout and counts commits
 Versions before 1.23 stored automatic and manual base choices in the same cache. That ambiguous legacy cache is ignored on upgrade; reselect any manual base you want to pin. New explicit choices are stored separately, so automatic detection follows branch switches and ref updates. Comparisons use already-fetched refs; the dashboard does not fetch or change repository contents.
 
 Working-tree comparisons show the net result of staged and unstaged edits. If a staged edit is canceled by an unstaged edit, the repository remains marked uncommitted even though the net diff can be empty. Unsaved editor buffers are not part of Git’s file discovery. Submodule content is not expanded into a text diff. Repositories without a first commit or with no common ancestor report an unavailable comparison with the reason in the tooltip.
+
+Live watching applies to repository diff viewers opened from this sidebar during the current VS Code session. Each open review retains its scope and test filter. Background reviews refresh when selected again, without stealing focus; unsaved edits postpone file-list rebuilding until saved. A rebuilt native snapshot can reset scroll and collapse state. Close the review to stop its file watcher; after reloading VS Code, reopen the review from the sidebar to resume watching.
 
 Test detection covers test/spec directories, `.test`, `.spec`, `_test`, `test_`, common `Test`/`Tests` suffixes, snapshots, and e2e directories. Tests remain ordinary expandable files when included: VS Code does not expose selective initial collapse for its native multifile diff.
 
